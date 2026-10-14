@@ -30,3 +30,11 @@ o doble clic en `ClaudePet.bat`.
 ## Ajustes
 
 `PET_SIZE` al principio de `claude_pet.py` cambia el tamaño de la mascota.
+
+## API key de Claude
+
+Esta versión **no usa** la API de Claude, así que no necesita ninguna key.
+
+Si extendés el proyecto con funciones que llamen a la API de Claude (por ejemplo un chat), poné tu key en un archivo llamado **`api_key.txt`** en esta misma carpeta (solo la key, sin nada más), o definí la variable de entorno `ANTHROPIC_API_KEY`.
+
+`api_key.txt` está en el `.gitignore`, así que **nunca se sube a GitHub**. Conseguí tu key en https://console.anthropic.com. No la pegues en el código ni la compartas.
