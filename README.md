@@ -15,6 +15,7 @@ o doble clic en `ClaudePet.bat`.
 ## Qué hace
 
 - Camina por el piso y por arriba de tus ventanas abiertas (las detecta en tiempo real).
+- Detecta todos tus monitores (los que haya, a cualquier altura) y se pasa de uno a otro. Si enchufás o sacás un monitor, se da cuenta.
 - Salta entre ventanas, se sienta en un borde con las patitas colgando y "surfea" una ventana moviéndola un poco.
 - Comenta lo que tenés abierto según el título de la ventana.
 - Duerme, programa en su laptop, baila, saluda, toma café, te sigue y a veces te lleva el mouse.
@@ -24,7 +25,7 @@ o doble clic en `ClaudePet.bat`.
 ## Controles
 
 - **Click**: lo molestás. **Arrastrar**: lo agarrás y lo tirás.
-- **Click derecho**: menú para pedirle cada actividad.
+- **Click derecho**: menú para pedirle cada actividad, incluido **Cambiar de monitor**.
 - Desde el menú podés desactivar que se lleve el mouse o mueva ventanas, y activar **Iniciar con Windows**.
 
 ## Ajustes

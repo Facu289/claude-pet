@@ -99,10 +99,49 @@ TITLE_QUIPS = [
 
 
 # ---------- helpers de Windows ----------
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+                                     ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+
 def work_area():
     r = wintypes.RECT()
     user32.SystemParametersInfoW(48, 0, ctypes.byref(r), 0)
     return r.left, r.top, r.right, r.bottom
+
+
+def monitors():
+    """Areas de trabajo (sin barra de tareas) de todos los monitores: (izq, arriba, der, abajo)."""
+    out = []
+
+    def cb(hmon, hdc, rect, lparam):
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(mi)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            w = mi.rcWork
+            out.append((w.left, w.top, w.right, w.bottom))
+        return True
+
+    try:
+        user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
+    except Exception:
+        pass
+    return sorted(out) or [work_area()]
+
+
+def floors_from(mons):
+    """Un piso por monitor; monitores contiguos y a la misma altura se fusionan en uno solo."""
+    merged = []
+    for l, t, r, b in mons:
+        if merged and l <= merged[-1][1] + 2 and abs(b - merged[-1][2]) <= 10:
+            merged[-1][1] = max(merged[-1][1], r)
+        else:
+            merged.append([l, r, b])
+    return [(-(i + 1), l, r, b) for i, (l, r, b) in enumerate(merged)]   # ids negativos = pisos
 
 
 def cursor_pos():
@@ -118,7 +157,7 @@ def window_title(hwnd):
     return buf.value
 
 
-def window_platforms(wt, wb):
+def window_platforms(mons):
     """Tops de ventanas visibles como (hwnd, izq, der, y). Descarta lo tapado por otras ventanas."""
     out, higher = [], []
 
@@ -153,7 +192,9 @@ def window_platforms(wt, wb):
                         if hr < b:
                             new.append((hr, b))
                 segs = new
-        if wt + 80 <= top <= wb - 30 and bot - top >= 60:
+        cx = (l + rt) // 2
+        mon = next((m for m in mons if m[0] <= cx < m[2] and m[1] <= top < m[3]), None)
+        if mon and mon[1] + 80 <= top <= mon[3] - 30 and bot - top >= 60:
             for a, b in segs:
                 if b - a >= 100:
                     out.append((int(hwnd or 0), a, b, top))
@@ -207,8 +248,14 @@ class Pet:
         self.c = tk.Canvas(root, width=self.W, height=self.H, bg=KEY, highlightthickness=0)
         self.c.pack()
 
-        self.wl, self.wt, self.wr, self.wb = work_area()
-        self.x = random.randint(self.wl + 150, self.wr - 150)
+        self.mons = monitors()
+        self.floors = floors_from(self.mons)
+        self.wl = min(m[0] for m in self.mons)       # escritorio virtual (todos los monitores)
+        self.wt = min(m[1] for m in self.mons)
+        self.wr = max(m[2] for m in self.mons)
+        self.wb = max(m[3] for m in self.mons)
+        f = self.floors[0]
+        self.x = random.randint(f[1] + 150, max(f[1] + 151, f[2] - 150))
         self.y = self.wt + 60
         self.vx = self.vy = 0.0
         self.grounded, self.plat, self.resume = False, 0, None
@@ -265,6 +312,7 @@ class Pet:
     # ----- menu -----
     def build_menu(self):
         m = self.menu = tk.Menu(self.root, tearoff=0)
+        m.add_command(label="Cambiar de monitor", command=self.next_monitor)
         m.add_command(label="Contame un chiste", command=lambda: self.begin("joke", True))
         m.add_separator()
         for label, kind in [("Dormir", "sleep"), ("Programar", "code"), ("Bailar", "dance"),
@@ -329,12 +377,46 @@ class Pet:
                 return
 
     # ----- plataformas / fisica -----
+    def refresh_monitors(self):
+        mons = monitors()
+        if mons == self.mons:
+            return
+        old, self.mons = len(self.mons), mons
+        self.floors = floors_from(mons)
+        self.wl, self.wt = min(m[0] for m in mons), min(m[1] for m in mons)
+        self.wr, self.wb = max(m[2] for m in mons), max(m[3] for m in mons)
+        if len(mons) > old:
+            self.say("¡Detecté otro monitor! 🖥️", 4)
+        elif len(mons) < old:
+            self.say("Se fue un monitor...", 3)
+
     def refresh_platforms(self):
+        if self.t % 60 == 0:
+            self.refresh_monitors()
         try:
-            plats = window_platforms(self.wt, self.wb)
+            plats = window_platforms(self.mons)
         except Exception:
             plats = []
-        self.platforms = plats + [(0, self.wl, self.wr, self.wb)]
+        self.platforms = plats + [(fid, l, r, b) for fid, l, r, b in self.floors]
+
+    def warp_to_floor(self, floor):
+        """Teletransporta a la mascota arriba de un piso (cae sola hasta aterrizar)."""
+        _, l, r, b = floor
+        self.x = random.uniform(l + 60, max(l + 61, r - 60))
+        self.y = self.wt - 30
+        self.vx = self.vy = 0
+        self.grounded = False
+        self.start("fall")
+
+    def next_monitor(self):
+        if len(self.floors) < 2 and len(self.mons) < 2:
+            self.say("Solo veo un monitor 🤷")
+            return
+        mons = sorted(self.mons)
+        cur = next((i for i, m in enumerate(mons) if m[0] <= self.x < m[2]), 0)
+        l, t, r, b = mons[(cur + 1) % len(mons)]
+        self.warp_to_floor((0, l, r, b))
+        self.say("¡Me mudo de monitor!", 2.5)
 
     def bounds(self):
         for h, l, r, _ in self.platforms:
@@ -374,6 +456,10 @@ class Pet:
                     self.land(min(hit, key=lambda q: q[3]))
                     return
             self.y = ny
+            if self.y > self.wb + 250:               # se cayo fuera del escritorio: reaparece
+                near = min(self.floors, key=lambda f: 0 if f[1] <= self.x <= f[2]
+                           else min(abs(self.x - f[1]), abs(self.x - f[2])))
+                self.warp_to_floor(near)
 
     def land(self, p):
         self.grounded, self.plat, self.y = True, p[0], p[3]
@@ -384,7 +470,7 @@ class Pet:
                 self.resume = None
             else:
                 self.start("idle", random.uniform(2, 5))
-            if p[0]:
+            if p[0] > 0:
                 self.comment_window(p[0])
 
     def jump(self, vx, vy):
@@ -437,10 +523,10 @@ class Pet:
             return
         d = random.choice((-1, 1))
         say = (lambda txt: self.say(txt)) if loud else (lambda txt: self.quiet(txt, 0.25))
-        if kind in ("sit", "surf") and (self.plat == 0 or
+        if kind in ("sit", "surf") and (self.plat <= 0 or
                                         (kind == "surf" and not self.allow_windows.get())):
             if loud:
-                if self.plat == 0 and self.try_climb():
+                if self.plat <= 0 and self.try_climb():
                     self.say("primero subo a una ventana")
                 else:
                     self.say("no puedo ahora 🤷")
@@ -506,7 +592,7 @@ class Pet:
             return False
         if abs(dx) <= stop:
             self.facing = 1 if dx >= 0 else -1
-            if cy > self.y + 70 and self.plat != 0:   # objetivo mucho mas abajo: bajar
+            if cy > self.y + 70 and self.plat > 0:   # objetivo mucho mas abajo: bajar
                 self.grounded, self.vx = False, self.facing * 3
                 return False
             return cy >= self.y - 100
@@ -549,7 +635,14 @@ class Pet:
         d = self.data
         d["n"] += 1
         top = self.top_of(d["hwnd"], d["tx"])
-        if top is None or d["n"] > 600:
+        if d["n"] > 600:
+            floor = next((f for f in self.floors if f[0] == d["hwnd"]), None)
+            if floor:
+                self.warp_to_floor(floor)
+            else:
+                self.start("idle", 2)
+            return
+        if top is None:
             self.start("idle", 2)
             return
         self.go_toward(d["tx"], top - 20 * S, 4.5, 12)
@@ -574,7 +667,7 @@ class Pet:
         d["n"] += 1
         stop = d["n"] > 15 and (user32.GetAsyncKeyState(1) & 0x8000)   # click = parar
         r = wintypes.RECT()
-        if (hw == 0 or stop or self.timer <= 0 or user32.IsZoomed(wintypes.HWND(hw))
+        if (hw <= 0 or stop or self.timer <= 0 or user32.IsZoomed(wintypes.HWND(hw))
                 or not user32.GetWindowRect(wintypes.HWND(hw), ctypes.byref(r))):
             self.start("idle", 2)
             return
